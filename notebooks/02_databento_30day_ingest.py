@@ -290,6 +290,7 @@ display(spark.table(CRACK_VIEW).orderBy("cme_trade_date"))
 
 # MAGIC %md
 # MAGIC ## 8. Hand off to Genie
-# MAGIC Run **`03_create_genie_space`**. It creates (or updates) a Genie space over the daily table, the hourly table
+# MAGIC Run **`03_energy_finance_domain`** to model the Energy Finance ontology, then **`04_create_genie_space`**.
+# MAGIC Notebook 4 creates (or updates) a Genie space over the daily table, the hourly table
 # MAGIC and the crack-spread view, with general instructions, trusted example SQL and sample questions, all defined
 # MAGIC as code.

@@ -4,14 +4,15 @@
 # environment_version = "6"
 # ///
 # MAGIC %md
-# MAGIC # Notebook 3: Create the Genie Space (as code)
+# MAGIC # Notebook 4: Create the Genie Space (as code)
 # MAGIC
 # MAGIC **Why define Genie as code?** A Genie space is only as good as its *context*: which tables it sees, the
 # MAGIC business rules in its instructions, and the **trusted example SQL** it can reuse. Keeping that context in a
 # MAGIC notebook means every student (and every rehearsal) gets the same, tested space, and changes are reviewable.
 # MAGIC
 # MAGIC **What it creates** (or updates in place, if a space with the same title already exists):
-# MAGIC - **Data:** the daily table, the hourly table, and the 3-2-1 crack spread view
+# MAGIC - **Data:** the daily table, the hourly table, and the 3-2-1 crack spread view, plus the Energy Finance
+# MAGIC   ontology from Notebook 3 (entity tables and the metric view) when it exists
 # MAGIC - **General instructions:** product synonyms, units, trade-date and roll rules, metric definitions
 # MAGIC - **Trusted example SQL:** six vetted queries (volatility, correlation, crack spread, range, volume by hour, rolls)
 # MAGIC - **Sample questions** shown to users when they open the space
@@ -39,7 +40,19 @@ TABLES = {
 missing = [t for t in TABLES.values() if not spark.catalog.tableExists(t)]
 if missing:
     raise RuntimeError(f"Missing tables {missing}. Run Notebook 2 or 00_load_synthetic_data first.")
-print("Tables found:", *TABLES.values(), sep="\n  ")
+
+# The Energy Finance ontology from Notebook 3 is optional: include it when it has been built.
+ONTOLOGY = {
+    "dim_product": f"{CATALOG}.{SCHEMA}.dim_commodity_product",
+    "dim_contract": f"{CATALOG}.{SCHEMA}.dim_futures_contract",
+    "dim_session": f"{CATALOG}.{SCHEMA}.dim_trading_session",
+    "metrics": f"{CATALOG}.{SCHEMA}.energy_finance_metrics",
+}
+HAS_ONTOLOGY = all(spark.catalog.tableExists(t) for t in ONTOLOGY.values())
+if HAS_ONTOLOGY:
+    TABLES.update(ONTOLOGY)
+print("Energy Finance ontology:", "included" if HAS_ONTOLOGY else "not built yet (run Notebook 3 to add it)")
+print("Tables:", *TABLES.values(), sep="\n  ")
 
 # COMMAND ----------
 
@@ -76,6 +89,15 @@ INSTRUCTIONS = f"""## PURPOSE
 - Annualized volatility (%) = STDDEV_SAMP(daily_return_pct) * SQRT(252).
 - Daily range = high - low (daily_range); relative range = daily_range_pct.
 - 3-2-1 crack spread = crack_321_usd_bbl from the crack spread view (estimated refining margin in USD per barrel).
+"""
+
+if HAS_ONTOLOGY:
+    INSTRUCTIONS += f"""
+## ENERGY FINANCE ONTOLOGY
+- Product attributes (commodity group, exchange, contract size, tick size) are in {ONTOLOGY['dim_product']}; join on product_root.
+- "Refined products" means commodity_group = 'Refined Products' (RBOB gasoline and ULSD). "Crude" products: commodity_group = 'Crude Oil'.
+- Contract months are in {ONTOLOGY['dim_contract']} (join on instrument_id); sessions in {ONTOLOGY['dim_session']} (join on cme_trade_date).
+- Prefer the governed measures in the metric view {ONTOLOGY['metrics']} for volatility, average range, average close and volume. Query it with MEASURE(`Measure Name`) and GROUP BY its dimensions (`Trade Date`, `Product`, `Commodity Group`, `Day of Week`).
 """
 
 # COMMAND ----------
@@ -136,6 +158,15 @@ WHERE is_contract_roll
 ORDER BY cme_trade_date, product_name"""),
 ]
 
+if HAS_ONTOLOGY:
+    EXAMPLE_SQL.append(("What is the annualized volatility of each commodity group?", """
+SELECT `Commodity Group`,
+       ROUND(MEASURE(`Annualized Volatility Pct`), 1) AS annualized_volatility_pct,
+       MEASURE(`Trade Days`) AS trade_days
+FROM {metrics}
+GROUP BY ALL
+ORDER BY annualized_volatility_pct DESC"""))
+
 SAMPLE_QUESTIONS = [
     "Which energy product has been the most volatile over the last 30 days?",
     "Show the daily closing price of natural gas as a line chart.",
@@ -144,6 +175,8 @@ SAMPLE_QUESTIONS = [
     "Which weekday has the largest average absolute return for gasoline?",
     "At what hour of the day does crude oil trade the most volume?",
 ]
+if HAS_ONTOLOGY:
+    SAMPLE_QUESTIONS.append("How volatile are refined products compared with crude oil?")
 
 # Validate every example query before it goes into Genie.
 for question, sql in EXAMPLE_SQL:

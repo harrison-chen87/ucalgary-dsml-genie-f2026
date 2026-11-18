@@ -8,7 +8,7 @@
 # MAGIC
 # MAGIC **Use this if** you don't have a Databento API key, or want to go straight to the Genie part of the workshop.
 # MAGIC It loads the CSVs in this repo's `data/synthetic/` folder and builds the **same** tables and view as Notebook 2,
-# MAGIC so Notebook 3 (the Genie space) works unchanged.
+# MAGIC so Notebook 3 (ontology) and Notebook 4 (Genie space) work unchanged.
 # MAGIC
 # MAGIC **What is this data?** It is **simulated**, not real market prices. A model was fitted to the *statistics* of
 # MAGIC 30 days of real CME energy futures data (each product's volatility, how the products move together, volume by
@@ -119,7 +119,7 @@ if (merged["close_csv"] - merged["close_table"]).abs().max() > 1e-9:
 print(f"{HOURLY_TABLE}: {spark.table(HOURLY_TABLE).count():,} rows")
 print(f"{DAILY_TABLE}:  {len(built):,} rows (matches energy_futures_daily.csv)")
 print(f"{CRACK_VIEW}: {spark.table(CRACK_VIEW).count():,} rows (view)")
-print("Next: run 03_create_genie_space.")
+print("Next: run 03_energy_finance_domain, then 04_create_genie_space.")
 
 # COMMAND ----------
 

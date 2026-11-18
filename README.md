@@ -33,14 +33,15 @@ market actually works, and giving Genie the business context it needs. This work
 ## Two ways through the workshop
 | Track | Run | When to use |
 |---|---|---|
-| **A: Live API** | `01` → `02` → `03` | You have a Databento API key and want to build the pipeline yourself |
-| **B: Synthetic data** | `00` → `03` | No Databento account needed: load the synthetic dataset in `data/synthetic/` and go straight to Genie |
+| **A: Live API** | `01` → `02` → `03` → `04` | You have a Databento API key and want to build the pipeline yourself |
+| **B: Synthetic data** | `00` → `03` → `04` | No Databento account needed: load the synthetic dataset in `data/synthetic/` and go straight to Genie |
 
 | Notebook | What it does |
 |---|---|
 | `01_databento_discovery` | Explore the API (datasets, schemas, symbology), then pull 10 rows into a table |
 | `02_databento_30day_ingest` | Pull 30 days of hourly bars and build an hourly table, a daily table, and a crack-spread view, plus statistics: volatility, correlation, volume by hour, refining margin |
-| `03_create_genie_space` | Create a Genie space **as code**: tables, instructions, trusted example SQL, and sample questions |
+| `03_energy_finance_domain` | Model the **Energy Finance ontology**: entity tables with primary keys, foreign-key relationships, governed tags, a domain hierarchy, and a metric view |
+| `04_create_genie_space` | Create a Genie space **as code**: tables, instructions, trusted example SQL, and sample questions |
 | `00_load_synthetic_data` | Build the same tables from the synthetic CSVs in this repo (no API key needed) |
 | `_workshop_common` | Shared helpers (table comments, product data, crack-spread view) that the others load with `%run` |
 
@@ -87,8 +88,20 @@ which the UC-secret form of `dbutils.secrets.get` needs.
   from it; it's the key benchmark for refinery margins. Refiners turn 3 barrels of crude into about 2 of gasoline and 1 of diesel. The margin,
   in USD per barrel, is `(2 × RB × 42 + HO × 42 − 3 × CL) / 3`. There are 42 gallons in a barrel.
 
+## The ontology: giving data shared meaning
+An **ontology** describes what exists in a subject area and how things relate. Notebook 3 builds one for Energy
+Finance and maps each building block to Unity Catalog:
+
+| Building block | Example | Unity Catalog object |
+|---|---|---|
+| Entity | commodity product, futures contract, trading session | dimension table with a primary key |
+| Relationship | a price bar belongs to a contract and a session | foreign-key constraint |
+| Classification | crude oil vs refined products; entity vs fact | governed tag with allowed values |
+| Hierarchy | Energy Finance → Market Data, Refining Economics | domain and subdomains (Beta) |
+| Business metric | annualized volatility, defined once | metric view |
+
 ## The Genie exercise
-After Notebook 3, open the Genie space it links to and try:
+After Notebook 4, open the Genie space it links to and try:
 1. *"What is the average price of gas?"* Genie should choose **natural gas**, not gasoline, because of the
    synonym rules in its instructions.
 2. *"Which product is the most volatile?"* Compare the answer with section 7.1 of Notebook 2. It should match,
@@ -102,7 +115,7 @@ After Notebook 3, open the Genie space it links to and try:
 | `TypeError: ... unexpected keyword argument 'catalog'` | The environment pin is missing or misplaced. The `# /// script` block must come right **after** `# Databricks notebook source`. |
 | `422 data_schema_not_fully_available` | You asked for data past the schema's last published time. The notebooks clamp the window automatically; check any edits. |
 | `UNSUPPORTED_ARROWTYPE Int(8, false)` | Databento uses unsigned integers. Cast them to `int64` before Spark or `display()` sees them. |
-| `Missing tables ...` in Notebook 3 | Run Notebook 2 (Track A) or `00_load_synthetic_data` (Track B) first. |
+| `Missing tables ...` in Notebook 3 or 4 | Run Notebook 2 (Track A) or `00_load_synthetic_data` (Track B) first. |
 
 ## A note on the data
 - **Track A** pulls real CME Group data through Databento under **your own Databento account**. Please don't publish
