@@ -1,0 +1,11 @@
+.DS_Store
+.ipynb_checkpoints/
+__pycache__/
+.venv/
+# Never commit credentials or real market data
+.databrickscfg
+.env
+*.env
+*.parquet
+*.csv
+!data/synthetic/*.csv
