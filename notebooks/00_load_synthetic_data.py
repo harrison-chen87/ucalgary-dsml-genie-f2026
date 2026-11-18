@@ -91,6 +91,7 @@ hourly = (spark.createDataFrame(hourly_pdf)
           .withColumn("instrument_id", F.col("instrument_id").cast("long"))
           .withColumn("publisher_id", F.col("publisher_id").cast("int"))
           .withColumn("ingested_at", F.current_timestamp()))
+drop_ontology_constraints(HOURLY_TABLE)
 hourly.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(HOURLY_TABLE)
 
 SYNTHETIC_NOTE = "SYNTHETIC DATA: simulated from statistics of real CME data, not real market prices. "

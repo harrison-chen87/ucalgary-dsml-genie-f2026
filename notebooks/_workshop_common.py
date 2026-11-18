@@ -88,6 +88,16 @@ def apply_comments(table: str, table_comment: str, column_comments: dict) -> Non
             spark.sql(f"ALTER TABLE {table} ALTER COLUMN {column} COMMENT {sql_literal(text)}")
 
 
+def drop_ontology_constraints(table: str) -> None:
+    """Remove the primary/foreign keys Notebook 3 adds, so the table can be rewritten (Notebook 3 re-adds them)."""
+    if not spark.catalog.tableExists(table):
+        return
+    prefix = "daily" if table.endswith(DAILY_TABLE_NAME) else "hourly"
+    for target in ("product", "contract", "session"):
+        spark.sql(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {prefix}_fk_{target}")
+    spark.sql(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {prefix}_pk")
+
+
 def build_daily_table(hourly_table: str, daily_table: str) -> None:
     """(Re)build the daily table from the hourly table: one row per symbol per CME trade date.
 
@@ -130,6 +140,7 @@ def build_daily_table(hourly_table: str, daily_table: str) -> None:
              .drop("prev_close", "prev_instrument_id")
              .withColumn("updated_at", F.current_timestamp()))
 
+    drop_ontology_constraints(daily_table)
     daily.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(daily_table)
     apply_comments(daily_table, DAILY_TABLE_COMMENT, DAILY_COLUMN_COMMENTS)
 

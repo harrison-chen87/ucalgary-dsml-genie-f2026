@@ -155,8 +155,16 @@ display(hourly.limit(10))
 # MAGIC ## 5. Data Engineering - Enrichment - Upsert into the hourly Delta table
 # MAGIC The key is `(symbol, bar_start_utc)`. MERGE updates bars we already have (Databento can revise recent bars)
 # MAGIC and inserts new ones, so running this notebook again next week extends the history without duplicates.
+# MAGIC If the table holds the **synthetic** dataset (from `00_load_synthetic_data`), it is replaced instead, so real and
+# MAGIC synthetic bars never mix.
 
 # COMMAND ----------
+
+if spark.catalog.tableExists(HOURLY_TABLE) and \
+        spark.table(HOURLY_TABLE).where("source_dataset = 'SYNTHETIC'").limit(1).count():
+    print(f"{HOURLY_TABLE} holds synthetic data; replacing it with real Databento data.")
+    drop_ontology_constraints(HOURLY_TABLE)
+    spark.sql(f"DROP TABLE {HOURLY_TABLE}")
 
 if not spark.catalog.tableExists(HOURLY_TABLE):
     hourly.write.format("delta").saveAsTable(HOURLY_TABLE)
