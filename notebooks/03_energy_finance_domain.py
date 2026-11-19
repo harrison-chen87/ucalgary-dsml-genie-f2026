@@ -29,6 +29,11 @@
 # MAGIC | Classification | **Governed tags** with a fixed list of allowed values | Step 3 |
 # MAGIC | Hierarchy | **Domains** and subdomains (Beta) | Step 4 |
 # MAGIC | Business metric | A **metric view**: one governed definition of each measure | Step 5 |
+# MAGIC | Trust | **Certification** of the assets people should rely on | Step 5b |
+# MAGIC
+# MAGIC The five building blocks above are general ontology concepts, not a list of Databricks features. This notebook
+# MAGIC covers the Unity Catalog semantics needed for them (relationships, governed tags, domains, metric views,
+# MAGIC certification); see "Where to go next" at the end for more.
 # MAGIC
 # MAGIC **Prerequisite:** the hourly table, daily table and crack-spread view exist (Notebook 2 or `00_load_synthetic_data`).
 # MAGIC Re-run this notebook whenever you rebuild those tables.
@@ -205,27 +210,20 @@ for table, col, dim in RELATIONSHIPS:
 # MAGIC |---|---|---|
 # MAGIC | `ontology_type` | tables and views | `entity`, `fact`, `derived`, `metric` |
 # MAGIC | `semantic_type` | columns | `identifier`, `price`, `volume`, `timestamp`, `flag` |
+# MAGIC
+# MAGIC Governed tags are created with SQL: `CREATE GOVERNED TAG ontology_type DESCRIPTION '...' VALUES ('entity', ...)`.
 
 # COMMAND ----------
 
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import DatabricksError
-
-w = WorkspaceClient()
-
-
 def ensure_governed_tag(tag_key: str, description: str, values: list[str] | None = None) -> None:
-    """Create a governed tag (tag policy) unless it already exists."""
-    body = {"tag_key": tag_key, "description": description}
-    if values:
-        body["values"] = [{"name": v} for v in values]
-    try:
-        w.api_client.do("POST", "/api/2.1/tag-policies", body=body)
-        print(f"created governed tag  {tag_key}")
-    except DatabricksError as exc:
-        if "ALREADY_EXISTS" not in str(exc) and "already exists" not in str(exc).lower():
-            raise
+    """Create a governed tag with CREATE GOVERNED TAG, unless it already exists (SQL has no IF NOT EXISTS)."""
+    existing = {row["Tag Key"] for row in spark.sql("SHOW GOVERNED TAGS").collect()}
+    if tag_key in existing:
         print(f"governed tag exists   {tag_key}")
+        return
+    allowed = f" VALUES ({', '.join(sql_literal(v) for v in values)})" if values else ""
+    spark.sql(f"CREATE GOVERNED TAG `{tag_key}` DESCRIPTION {sql_literal(description)}{allowed}")
+    print(f"created governed tag  {tag_key}")
 
 
 ensure_governed_tag("ontology_type", "Role of a table in the Energy Finance ontology.",
@@ -270,14 +268,24 @@ print("Classification tags applied.")
 # MAGIC ## Step 4 - Hierarchy: the Energy Finance domain
 # MAGIC A **domain** groups data assets by area of knowledge so people can find them, and it can contain **subdomains**.
 # MAGIC Each domain is backed by its own governed tag; tagging a table with it places the table in the domain.
-# MAGIC A subdomain's tag key must follow the pattern `<parent tag>/<SubdomainName>`.
+# MAGIC Two rules to know:
+# MAGIC - A **subdomain's tag key must follow `<parent tag>/<SubdomainName>`**, e.g. `energy_finance/MarketData`.
+# MAGIC - The **governed tag must exist before the domain**. Creating a domain doesn't create its tag; it fails with
+# MAGIC   "Tag policy ... not found". So the cell below creates each tag first, then the domain.
 # MAGIC
 # MAGIC ```
 # MAGIC Energy Finance                 (tag: energy_finance)            → dim_commodity_product
 # MAGIC ├── Market Data                (tag: energy_finance/MarketData) → hourly, daily, contracts, sessions, metrics
 # MAGIC └── Refining Economics         (tag: energy_finance/RefiningEconomics) → crack-spread view
 # MAGIC ```
-# MAGIC Domains are a **Beta** feature, so the API may change.
+# MAGIC `dim_commodity_product` sits in the **parent** domain on purpose: product reference data serves all of Energy
+# MAGIC Finance, not just Market Data. So you won't see it when you browse *into* Market Data. That's a design choice,
+# MAGIC not a bug.
+# MAGIC
+# MAGIC Domains are a **Beta** feature. The cell below creates them through the Domains REST API, the same API the
+# MAGIC Databricks CLI's `databricks domains` command uses. **If that cell fails** (Beta APIs can change), create the
+# MAGIC three domains in the workspace's **Discover** page instead, using the tag keys in the diagram above, then run
+# MAGIC the tagging cell after it. Everything else in this notebook is plain SQL and doesn't depend on the API.
 
 # COMMAND ----------
 
@@ -293,8 +301,14 @@ DOMAINS = [
 ]
 
 
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import DatabricksError
+
+w = WorkspaceClient()
+
+
 def ensure_domain(domain_id: str, tag_key: str, parent: str | None, subtitle: str, description: str) -> None:
-    """Create a domain (and its governed tag) unless it already exists."""
+    """Create a domain unless it already exists. Its governed tag is created first, with SQL."""
     ensure_governed_tag(tag_key, f"Domain tag for {domain_id}.")
     body = {"tag_key": tag_key, "subtitle": subtitle, "description": description}
     if parent:
@@ -311,6 +325,9 @@ def ensure_domain(domain_id: str, tag_key: str, parent: str | None, subtitle: st
 for spec in DOMAINS:
     ensure_domain(*spec)
 
+# COMMAND ----------
+
+# Place each asset in its domain by tagging it with the domain's tag key (key-only tag).
 ASSIGNMENTS = {
     "energy_finance": [DIM_PRODUCT],
     "energy_finance/MarketData": [HOURLY, DAILY, DIM_CONTRACT, DIM_SESSION],
@@ -329,6 +346,9 @@ print("Assets placed in domains.")
 # MAGIC Notebook 2 computed annualized volatility with a formula in a SQL cell. If every analyst writes that formula
 # MAGIC themselves, they'll eventually disagree. A **metric view** defines each measure **once**, joined to the entities, so
 # MAGIC SQL, dashboards and Genie all use the same definition. Query it with `MEASURE()`.
+# MAGIC
+# MAGIC Each dimension and measure also has **synonyms**: the other words people use for it ("vol", "risk", "sector").
+# MAGIC Genie reads them, so a question about "vol" finds `Annualized Volatility Pct`.
 
 # COMMAND ----------
 
@@ -352,9 +372,11 @@ dimensions:
   - name: Product
     expr: dim_product.product_name
     comment: "Commodity product name"
+    synonyms: ["commodity", "contract", "instrument"]
   - name: Commodity Group
     expr: dim_product.commodity_group
     comment: "Crude Oil, Refined Products, or Natural Gas"
+    synonyms: ["sector", "commodity type", "product group"]
   - name: Day of Week
     expr: day_of_week
 measures:
@@ -363,15 +385,19 @@ measures:
   - name: Average Close
     expr: AVG(close)
     comment: "Average daily close in the product's price unit; compare only within one product"
+    synonyms: ["average price", "mean close"]
   - name: Annualized Volatility Pct
     expr: STDDEV_SAMP(daily_return_pct) * SQRT(252)
     comment: "Standard deviation of daily returns x sqrt(252); roll days are excluded because their return is null"
+    synonyms: ["volatility", "annualized vol", "vol", "risk"]
   - name: Average Daily Range Pct
     expr: AVG(daily_range_pct)
     comment: "Average (high - low) / open, in percent"
+    synonyms: ["range", "daily range", "intraday range"]
   - name: Total Volume
     expr: SUM(volume)
     comment: "Contracts traded"
+    synonyms: ["contracts traded", "trading volume", "liquidity"]
 $$
 """)
 spark.sql(f"ALTER VIEW {METRICS} SET TAGS ('ontology_type' = 'metric')")
@@ -390,6 +416,25 @@ display(spark.sql(f"""
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Step 5b - Trust: certify the assets people should rely on
+# MAGIC Not every table is equally trustworthy. **Certification** marks the assets an owner vouches for, using the
+# MAGIC built-in governed tag `system.certification_status` (allowed values: `certified`, `deprecated`). We certify the
+# MAGIC metric view (the governed definitions) and the product table (curated reference data). Genie is told, in
+# MAGIC Notebook 4, to prefer certified assets.
+
+# COMMAND ----------
+
+spark.sql(f"ALTER VIEW {METRICS} SET TAGS ('system.certification_status' = 'certified')")
+spark.sql(f"ALTER TABLE {DIM_PRODUCT} SET TAGS ('system.certification_status' = 'certified')")
+display(spark.sql(f"""
+    SELECT table_name, tag_value AS certification_status
+    FROM {CATALOG}.information_schema.table_tags
+    WHERE schema_name = '{SCHEMA}' AND tag_name = 'system.certification_status'
+"""))
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Step 6 - Explore the ontology you built
 # MAGIC Everything above is now **metadata in Unity Catalog**. You can query it like data, and browse it in Catalog
 # MAGIC Explorer (open any table to see its tags, constraints and lineage) and in the Domains view (Beta).
@@ -399,7 +444,8 @@ display(spark.sql(f"""
 display(spark.sql(f"""
     SELECT table_name, tag_name, tag_value
     FROM {CATALOG}.information_schema.table_tags
-    WHERE schema_name = '{SCHEMA}' AND (tag_name = 'ontology_type' OR tag_name LIKE 'energy_finance%')
+    WHERE schema_name = '{SCHEMA}'
+      AND (tag_name IN ('ontology_type', 'system.certification_status') OR tag_name LIKE 'energy_finance%')
     ORDER BY tag_name, table_name
 """))
 
@@ -417,7 +463,9 @@ display(spark.sql(f"""
 
 # COMMAND ----------
 
-domains = w.api_client.do("GET", "/api/2.0/domains")
+from databricks.sdk import WorkspaceClient
+
+domains = WorkspaceClient().api_client.do("GET", "/api/2.0/domains")
 by_id = {d["domain_id"]: d for d in (domains if isinstance(domains, list) else domains.get("domains", []))}
 for domain_id, _, parent, _, _ in DOMAINS:
     d = by_id.get(domain_id, {})
@@ -432,5 +480,10 @@ for domain_id, _, parent, _, _ in DOMAINS:
 # MAGIC    specifications, classifications)? Why does Genie need both?
 # MAGIC 2. Where would a *Brent crude* product fit? What would you add to each step?
 # MAGIC 3. The foreign keys aren't enforced. What could go wrong, and how did Step 2 guard against it?
+# MAGIC
+# MAGIC ## Where to go next
+# MAGIC - **More Unity Catalog semantics:** this notebook doesn't cover everything. Explore the workspace's Discover page
+# MAGIC   (including domain **Pages**, where available) to see how a domain can be documented for business users.
+# MAGIC - **More products:** add Brent crude or jet fuel to `dim_commodity_product` and see what else has to change.
 # MAGIC
 # MAGIC **Next:** run `04_create_genie_space`. It adds the entity tables and metric view to the Genie space when they exist.

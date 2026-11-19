@@ -97,6 +97,7 @@ if HAS_ONTOLOGY:
 - Product attributes (commodity group, exchange, contract size, tick size) are in {ONTOLOGY['dim_product']}; join on product_root.
 - "Refined products" means commodity_group = 'Refined Products' (RBOB gasoline and ULSD). "Crude" products: commodity_group = 'Crude Oil'.
 - Contract months are in {ONTOLOGY['dim_contract']} (join on instrument_id); sessions in {ONTOLOGY['dim_session']} (join on cme_trade_date).
+- Prefer certified assets (tag system.certification_status = 'certified'): the metric view and dim_commodity_product.
 - Prefer the governed measures in the metric view {ONTOLOGY['metrics']} for volatility, average range, average close and volume. Query it with MEASURE(`Measure Name`) and GROUP BY its dimensions (`Trade Date`, `Product`, `Commodity Group`, `Day of Week`).
 """
 
